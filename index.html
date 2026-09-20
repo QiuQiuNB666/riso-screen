@@ -1,0 +1,211 @@
+<!doctype html><meta charset="utf-8"><title>riso 网点自检</title>
+<style>
+ body{margin:0;padding:24px;background:#f0e9da;font:13px/1.7 ui-monospace,Menlo,monospace;color:#26252e}
+ h2{font-size:13px;margin:22px 0 8px;letter-spacing:.08em}
+ canvas{display:block;image-rendering:pixelated}
+ .row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
+ #out{white-space:pre;background:#fff;padding:14px;border:1px solid #26252e33;margin-top:20px}
+ .ok{color:#0a7a3f}.bad{color:#c0201a;font-weight:700}
+</style>
+<canvas id="c" width="10" height="10" style="display:none"></canvas>
+<div class="row">
+ <div><h2>旧 dotTile（三版同格 0°）</h2><canvas id="old" width="420" height="300"></canvas></div>
+ <div><h2>新 screenTile（15/45/75° + 颗粒）</h2><canvas id="new" width="420" height="300"></canvas></div>
+</div>
+<h2>连续色阶 0.05 → 1.00（dark）</h2><canvas id="ramp" width="858" height="70"></canvas>
+<h2>三墨叠印玫瑰花结（放大 6×）</h2><canvas id="rose" width="858" height="180"></canvas>
+<h2>tile 边界放大 8×（红线 = tile 接缝位置，看网点有没有错位）</h2><canvas id="seam" width="858" height="200"></canvas>
+<div id="out">跑自检中…</div>
+
+<script>
+// ---- 最小化复刻 engine.js 的 riso 底座 ----
+var W=420,H=300;
+function mulberry32(a){return function(){a|=0;a=a+0x6D2B79F5|0;var t=Math.imul(a^a>>>15,1|a);t=t+Math.imul(t^t>>>7,61|t)^t;return((t^t>>>14)>>>0)/4294967296}}
+var R=mulberry32(1);
+var PAPER='#f0e9da', INK={warm:'#e8552a',cool:'#3b6f9e',dark:'#26252e'};
+var OFFSET={warm:[2.5,-1.5],cool:[-2,2],dark:[0,0]};
+var L={}; ['warm','cool','dark'].forEach(function(k){var c=document.createElement('canvas');c.width=900;c.height=900;L[k]=c.getContext('2d')});
+var TONE={};
+function dotTile(color,gap,r){var c=document.createElement('canvas');c.width=gap;c.height=gap;var t=c.getContext('2d');t.fillStyle=color;[[gap/2,gap/2],[0,0],[gap,0],[0,gap],[gap,gap]].forEach(function(p){t.beginPath();t.arc(p[0],p[1],r,0,7);t.fill()});return c}
+function oldTones(){return{warm:L.warm.createPattern(dotTile(INK.warm,7,2.4),'repeat'),cool:L.cool.createPattern(dotTile(INK.cool,7,2.2),'repeat'),dark:L.dark.createPattern(dotTile(INK.dark,8,1.8),'repeat')}}
+</script>
+<script src="riso-screen.js"></script>
+<script src="riso-selfcheck.js"></script>
+<script>
+var log=[], fails=0;
+function chk(name,pass,detail){ log.push((pass?'  ok  ':'  FAIL')+'  '+name+(detail?'   '+detail:'')); if(!pass)fails++; }
+
+// ---- 测一个 pattern 铺满后的实际覆盖率（相对纸色的偏离），顺便拿逐列剖面找接缝 ----
+function coverProfile(pat, size, band){
+  var cv=document.createElement('canvas'); cv.width=cv.height=size;
+  var c=cv.getContext('2d'); c.fillStyle=pat; c.fillRect(0,0,size,size);
+  var d=c.getImageData(0,0,size,size).data, nb=Math.floor(size/band), prof=[], all=0;
+  for(var b=0;b<nb;b++){ var s=0,n=0;
+    for(var y=0;y<size;y++) for(var x=b*band;x<(b+1)*band;x++){ s+=d[(y*size+x)*4+3]/255; n++; }
+    prof.push(s/n); all+=s/n;
+  }
+  return {mean:all/nb, prof:prof, min:Math.min.apply(null,prof), max:Math.max.apply(null,prof)};
+}
+
+// === 1. 点面积公式：实测覆盖率应该跟着 tone 走 ===
+var levels=[.1,.2,.3,.4,.5,.6,.7,.8,.9], prev=-1, mono=true, worst=0;
+levels.forEach(function(t){
+  var m=coverProfile(inkTone('dark',t),240,12).mean;
+  worst=Math.max(worst,Math.abs(m-t));
+  if(m<=prev)mono=false; prev=m;
+});
+chk('覆盖率单调随 tone 上升', mono);
+chk('覆盖率贴合 tone（点面积 ∝ tone）', worst<.10, '最大偏差 '+worst.toFixed(3));
+
+// === 2. 铺满均匀性：带宽取 tile 整数倍(25px)，避开带宽/格距拍频造成的误报 ===
+//     真接缝会让某一条带系统性偏离；拍频不会（加宽带宽就摊平了，已验证）
+['warm','cool','dark'].forEach(function(k){
+  [.3,.5,.55,.8].forEach(function(t){
+    var r=coverProfile(inkTone(k,t), STS*20, STS), spread=r.max-r.min;
+    chk('铺满均匀 '+k+'@'+SCREEN[k]+'° tone='+t, spread<.03, '极差 '+spread.toFixed(4));
+  });
+});
+
+// === 2b. 格子相位跨边界连续（这是"接缝"真正的定义）===
+//     低调区：首点偏移 + 末点到边距离，必须正好等于一个格距
+var _cell = STS*PAT_K/PAT_CELLS;
+var head = .5*_cell, tail = STS*PAT_K - (PAT_CELLS-.5)*_cell;
+chk('低调区格子跨边界连续', Math.abs(head+tail-_cell)<1e-6, 'head+tail='+(head+tail).toFixed(3)+' cell='+_cell.toFixed(3));
+//     高调区：挖白点画在 0 和 PAT_CELLS 两端，拼起来必须是同一个洞（半径相同）
+var hc=document.createElement('canvas'), _sz=STS*PAT_K;
+hc.width=hc.height=_sz; var hx=hc.getContext('2d');
+hx.drawImage(screenTile('dark', Math.round(.7*TONE_LEVELS), 0),0,0);
+var hd=hx.getImageData(0,0,_sz,_sz).data;
+function colAlpha(x){var s=0;for(var y=0;y<_sz;y++)s+=hd[(y*_sz+x)*4+3];return s/_sz/255}
+// 列 i 的像素中心在 i+0.5，左洞心在 0、右洞心在 _sz，所以列 i 要跟列 (_sz-1-i) 配对
+var lft=colAlpha(1)+colAlpha(2), rgt=colAlpha(_sz-2)+colAlpha(_sz-3);
+chk('高调区边界挖点半径对称', Math.abs(lft-rgt)<.06, '左 '+lft.toFixed(3)+' 右 '+rgt.toFixed(3));
+
+// === 3. 角度：三版两两相差 30°（mod 90）===
+var ks=['warm','cool','dark'];
+for(var i=0;i<3;i++)for(var j=i+1;j<3;j++){
+  var d=Math.abs(SCREEN[ks[i]]-SCREEN[ks[j]])%90; d=Math.min(d,90-d);
+  chk('角度分离 '+ks[i]+'/'+ks[j], d>=29.9, d+'°');
+}
+
+// === 4. tone>0.5 翻转处不该有台阶 ===
+var a=coverProfile(inkTone('dark',.48),240,12).mean, b=coverProfile(inkTone('dark',.56),240,12).mean;
+chk('0.5 翻转处浓度连续', b>a && (b-a)<.22, '.48→'+a.toFixed(3)+'  .56→'+b.toFixed(3));
+
+// === 5. 确定性：同参数两次生成必须逐像素相同 ===
+function px(cv){var c=document.createElement('canvas');c.width=cv.width;c.height=cv.height;var x=c.getContext('2d');x.drawImage(cv,0,0);return x.getImageData(0,0,cv.width,cv.height).data}
+_tiles={}; var t1=px(screenTile('dark',6,0));
+_tiles={}; var t2=px(screenTile('dark',6,0));
+var same=t1.length===t2.length; for(var q=0;q<t1.length&&same;q+=997) if(t1[q]!==t2[q]) same=false;
+chk('tile 生成确定（无 Math.random）', same);
+
+// === 6. 最要命的一条：生成 tile 不能偷吃全局 R ===
+// 不然"这一帧用到了哪几档 tone"会改变手绘线的随机序列，画面会玄学漂移
+R=mulberry32(1); R();
+_tiles={}; _pats={}; inkTone('warm',.33); inkTone('cool',.77); inkTone('dark',.5);
+var after=R();
+var ref=mulberry32(1); ref(); var expect=ref();
+chk('生成 tile 不污染全局 R', after===expect, after===expect?'':'R 被消耗了 → 逐帧会漂移');
+
+// === 7. boil：换 variant 必须真的换出不同 tile，且缓存 key 没漏 ===
+setBoil(0); var v0=inkTone('dark',.4);
+setBoil(80); var v1=inkTone('dark',.4);
+chk('boil 换版本 → pattern 真的重建', v0!==v1, 'variant '+_variant);
+setBoil(0); setBoil(1); chk('同一 boil 区间内不重建', _boilN==='b0', String(_boilN));
+// 套印偏移必须回到同一组值（确定性）
+setBoil(80); var o1=OFFSET.warm.slice(); setBoil(0); setBoil(80); var o2=OFFSET.warm.slice();
+chk('套印偏移确定可复现', o1[0]===o2[0]&&o1[1]===o2[1], '['+o1[0].toFixed(3)+','+o1[1].toFixed(3)+']');
+chk('套印抖动幅度合理(<0.5px)', Math.abs(o1[0]-OFFSET0.warm[0])<.5&&Math.abs(o1[1]-OFFSET0.warm[1])<.5);
+
+// === 7b. 防闪核心不变量：三个 variant 的覆盖率必须一致 ===
+//     半径抖动一旦走含 variant 的随机流，平涂区就会在 3Hz 上整块明暗跳。
+//     位置变化眼睛读成"工艺"，密度变化读成"闪"。
+['dark','warm','cool'].forEach(function(k){
+  var cov=[]; [0,8,16].forEach(function(f){ setBoil(f); cov.push(coverProfile(TONE[k],STS*20,STS).mean) });
+  var pp=Math.max.apply(null,cov)-Math.min.apply(null,cov);
+  chk('三 variant 覆盖率一致 '+k, pp<.003, '峰峰 '+(pp*100).toFixed(3)+'%  ['+cov.map(function(v){return v.toFixed(4)}).join(' ')+']');
+});
+setBoil(0);
+
+// === 7c. 色阶步长均匀（半径倍率表跨档共用才成立）===
+//     种子里带 level 的话每档重抽 64 个半径，抽样噪声和档距同量级 → 渐变变成不均匀台阶。
+//     分支内单独量：跨 0.5 那一步是两个分支的接缝，另算。
+function steps(ts){
+  var out=[], pv=null;
+  ts.forEach(function(t){ var m=coverProfile(inkTone('dark',t),STS*16,STS).mean;
+    if(pv!==null) out.push(m-pv); pv=m; });
+  return out;
+}
+//     采样点必须正好落在档位上（t=level/TONE_LEVELS），否则四舍五入会把某一步并成两档
+function lv(a,b){ var o=[]; for(var i=a;i<=b;i++) o.push(i/TONE_LEVELS); return o }
+[['低调区',lv(18,24)],['高调区',lv(36,42)]].forEach(function(p){
+  var st=steps(p[1]), sm=st.reduce(function(a,b){return a+b},0)/st.length;
+  var dev=Math.max.apply(null, st.map(function(v){return Math.abs(v-sm)}))/sm;
+  chk('色阶步长均匀 '+p[0], dev<.25, '步长 '+st.map(function(v){return v.toFixed(4)}).join('/')+'  最大偏离 '+(dev*100).toFixed(0)+'%');
+});
+//     跨分支台阶：两个分支在 t=0.5 处的实测落差。几何上应该严丝合缝，差值来自抗锯齿与缺墨。
+var lo=coverProfile(inkTone('dark',.5),STS*16,STS).mean;
+var hi=coverProfile(inkTone('dark',.5+1/TONE_LEVELS),STS*16,STS).mean;
+var ideal=1/TONE_LEVELS, gap=Math.abs((hi-lo)-ideal);
+chk('跨 0.5 分支接缝 <1%', gap<.01, '实测步长 '+(hi-lo).toFixed(4)+' 理想 '+ideal.toFixed(4)+' → 落差 '+(gap*100).toFixed(2)+'%');
+
+// === 8. 老名字还在，且浓度跟老引擎对得上 ===
+setBoil(0);
+var oldP=oldTones();
+[['warm',.74],['cool',.62],['dark',.32]].forEach(function(p){
+  var o=coverProfile(oldP[p[0]],240,12).mean, n=coverProfile(TONE[p[0]],240,12).mean;
+  chk('新旧浓度一致 TONE.'+p[0], Math.abs(o-n)<.10, '旧 '+o.toFixed(3)+' → 新 '+n.toFixed(3));
+});
+chk('TONE.at 连续色阶可用', typeof TONE.at==='function');
+
+// ---------- 画对比图 ----------
+function shapes(ctx, pats, label){
+  ctx.clearRect(0,0,420,300);
+  ctx.fillStyle=PAPER; ctx.fillRect(0,0,420,300);
+  ctx.save(); ctx.globalCompositeOperation='multiply';
+  ctx.fillStyle=pats.cool; ctx.fillRect(20,20,180,120);
+  ctx.fillStyle=pats.warm; ctx.beginPath(); ctx.arc(230,110,85,0,7); ctx.fill();
+  ctx.fillStyle=pats.dark; ctx.fillRect(20,170,380,110);
+  ctx.fillStyle=pats.warm; ctx.beginPath(); ctx.arc(120,225,55,0,7); ctx.fill();
+  ctx.restore();
+}
+shapes(document.getElementById('old').getContext('2d'), oldP);
+shapes(document.getElementById('new').getContext('2d'), {warm:TONE.warm,cool:TONE.cool,dark:TONE.dark});
+
+// 色阶条
+var rc=document.getElementById('ramp').getContext('2d');
+rc.fillStyle=PAPER; rc.fillRect(0,0,858,70);
+for(var s=0;s<20;s++){ var t=(s+1)/20; rc.fillStyle=inkTone('dark',t); rc.fillRect(s*42+4,6,38,58); }
+
+// 玫瑰花结放大
+var ro=document.getElementById('rose'), rx=ro.getContext('2d');
+var tmp=document.createElement('canvas'); tmp.width=143; tmp.height=30; var tc=tmp.getContext('2d');
+tc.fillStyle=PAPER; tc.fillRect(0,0,143,30);
+tc.globalCompositeOperation='multiply';
+['cool','warm','dark'].forEach(function(k){ tc.fillStyle=inkTone(k,.45); tc.fillRect(0,0,143,30); });
+rx.imageSmoothingEnabled=false; rx.drawImage(tmp,0,0,858,180);
+
+// tile 边界放大：画一小片再 8 倍放大，红线标在 tile 边界上
+var sm=document.getElementById('seam'), sx=sm.getContext('2d');
+var sw=Math.round(858/8), sh=25;
+var st=document.createElement('canvas'); st.width=sw; st.height=sh;
+var stc=st.getContext('2d'); stc.fillStyle=PAPER; stc.fillRect(0,0,sw,sh);
+stc.fillStyle=inkTone('dark',.35); stc.fillRect(0,0,sw,sh);
+sx.imageSmoothingEnabled=false; sx.drawImage(st,0,0,858,200);
+sx.strokeStyle='rgba(210,32,26,.55)'; sx.lineWidth=1;
+for(var sxx=STS;sxx<sw;sxx+=STS){ sx.beginPath(); sx.moveTo(sxx*8,0); sx.lineTo(sxx*8,200); sx.stroke(); }
+
+// 顺带跑 agent 那份 headless 自检，看两套结论是否一致
+try{
+  var hc = (typeof risoSelfCheck==='function') ? risoSelfCheck() : (window.__risoCheck||null);
+  var arr = hc && (hc.all||hc.results||(Array.isArray(hc)?hc:null));
+  if(arr){ var bad=arr.filter(function(r){return !r.pass});
+    log.push(''); log.push('---- headless 自检 (riso-selfcheck.js) ----');
+    arr.forEach(function(r){ log.push((r.pass?'  ok  ':'  FAIL')+'  '+r.name+(r.info?'   '+r.info:'')); if(!r.pass)fails++; });
+  } else log.push('\n  (headless 自检没返回可读结果)');
+}catch(e){ log.push('\n  (headless 自检抛错: '+e.message+')') }
+
+document.getElementById('out').innerHTML =
+  log.join('\n').replace(/^  ok  /gm,'<span class="ok">  ok  </span>').replace(/^  FAIL/gm,'<span class="bad">  FAIL</span>')
+  + '\n\n' + (fails? '<span class="bad">'+fails+' 项未通过</span>' : '<span class="ok">全部 '+log.length+' 项通过</span>');
+</script>
