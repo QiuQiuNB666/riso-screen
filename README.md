@@ -127,7 +127,7 @@ a=(0.85,0.3,0.2) → 露纸 8.4%   总墨 135%  纸还在呼吸   ← 暗部推�
 
 ## 自检
 
-`riso-selfcheck.js` 是 headless 版（`risoSelfCheck()` 或 `window.__risoCheck`），适合塞进渲染管线；`index.html` 把它和一套视觉/数值检查一起跑，共 **56 项**。覆盖的都是会静默失效的地方：
+`riso-selfcheck.js` 是 headless 版（`risoSelfCheck()` 或 `window.__risoCheck`），适合塞进渲染管线；`index.html` 把它和一套视觉/数值检查一起跑，共 **54 项**。覆盖的都是会静默失效的地方：
 
 - pattern 缓存 key 漏了 `variant` → boil 假死，画面完全不抖但代码看着是对的
 - 三个 variant 覆盖率不一致 → 平涂区 3Hz 闪

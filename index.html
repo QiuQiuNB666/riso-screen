@@ -1,12 +1,32 @@
-<!doctype html><meta charset="utf-8"><title>riso 网点自检</title>
+<!doctype html><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>riso-screen · 孔版网点引擎</title>
 <style>
- body{margin:0;padding:24px;background:#f0e9da;font:13px/1.7 ui-monospace,Menlo,monospace;color:#26252e}
- h2{font-size:13px;margin:22px 0 8px;letter-spacing:.08em}
- canvas{display:block;image-rendering:pixelated}
+ body{margin:0 auto;padding:28px 20px 60px;max-width:900px;background:#f0e9da;
+      font:13px/1.7 ui-monospace,Menlo,monospace;color:#26252e;-webkit-text-size-adjust:100%}
+ h1{font-size:20px;letter-spacing:.04em;margin:0 0 4px}
+ h2{font-size:13px;margin:26px 0 8px;letter-spacing:.08em}
+ p{margin:.5em 0;max-width:62ch}
+ a{color:#3b6f9e}
+ .lede{margin-bottom:6px}
+ ul{margin:.4em 0;padding-left:1.2em;max-width:62ch}
+ canvas{display:block;image-rendering:pixelated;max-width:100%;height:auto}
  .row{display:flex;gap:18px;flex-wrap:wrap;align-items:flex-start}
- #out{white-space:pre;background:#fff;padding:14px;border:1px solid #26252e33;margin-top:20px}
+ .row>div{flex:1 1 300px;min-width:0}
+ details{margin-top:26px}
+ summary{cursor:pointer;font-weight:700;letter-spacing:.05em}
+ #out{white-space:pre;background:#fff;padding:14px;border:1px solid #26252e33;
+      margin-top:12px;overflow-x:auto;font-size:12px}
  .ok{color:#0a7a3f}.bad{color:#c0201a;font-weight:700}
+ footer{margin-top:40px;padding-top:16px;border-top:1px solid #26252e22;color:#26252e99}
 </style>
+<h1>riso-screen</h1>
+<p class="lede">给 Canvas 2D 的孔版印刷网点引擎 —— <a href="https://github.com/QiuQiuNB666/riso-screen">源码与文档在 GitHub</a></p>
+<ul>
+ <li><b>网点角度</b>：三墨两两相差 30°(mod 90)，按相对亮度分配（最暗 45° / 中 75° / 最亮 15°）</li>
+ <li><b>连续色阶</b>：<code>r = cell·√(t/π)</code>，60 档，t&gt;0.5 翻转成挖白点</li>
+ <li><b>逐帧 boil</b>：三版轮换 3Hz。半径流不带 variant —— 位置变化读成"工艺"，密度变化读成"闪"</li>
+</ul>
 <canvas id="c" width="10" height="10" style="display:none"></canvas>
 <div class="row">
  <div><h2>旧 dotTile（三版同格 0°）</h2><canvas id="old" width="420" height="300"></canvas></div>
@@ -15,7 +35,8 @@
 <h2>连续色阶 0.05 → 1.00（dark）</h2><canvas id="ramp" width="858" height="70"></canvas>
 <h2>三墨叠印玫瑰花结（放大 6×）</h2><canvas id="rose" width="858" height="180"></canvas>
 <h2>tile 边界放大 8×（红线 = tile 接缝位置，看网点有没有错位）</h2><canvas id="seam" width="858" height="200"></canvas>
-<div id="out">跑自检中…</div>
+<details><summary>自检结果（点开）</summary><div id="out">跑自检中…</div></details>
+<footer>技术路线来自 <a href="https://a-small-light-three.vercel.app">a small light, room by room</a>（Kevin Ngo）</footer>
 
 <script>
 // ---- 最小化复刻 engine.js 的 riso 底座 ----
@@ -205,7 +226,11 @@ try{
   } else log.push('\n  (headless 自检没返回可读结果)');
 }catch(e){ log.push('\n  (headless 自检抛错: '+e.message+')') }
 
+var sm=document.querySelector('summary');
+if(sm) sm.innerHTML = fails ? '自检结果 · <span class="bad">'+fails+' 项未通过</span>（点开）'
+                            : '自检结果 · <span class="ok">全部 '+log.filter(function(l){return /^\s*ok\s/.test(l)}).length+' 项通过</span>（点开）';
+
 document.getElementById('out').innerHTML =
   log.join('\n').replace(/^  ok  /gm,'<span class="ok">  ok  </span>').replace(/^  FAIL/gm,'<span class="bad">  FAIL</span>')
-  + '\n\n' + (fails? '<span class="bad">'+fails+' 项未通过</span>' : '<span class="ok">全部 '+log.length+' 项通过</span>');
+  + '\n\n' + (fails? '<span class="bad">'+fails+' 项未通过</span>' : '<span class="ok">全部 '+log.filter(function(l){return /^\s*ok\s/.test(l)}).length+' 项通过</span>');
 </script>
